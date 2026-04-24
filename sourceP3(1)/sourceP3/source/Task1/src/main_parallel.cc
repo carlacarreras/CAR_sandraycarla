@@ -13,7 +13,10 @@
 #include <future>
 #include <omp.h>
 
-
+// --- ASPECTOS QUE DEFINEN LA TALLA DEL PROBLEMA ---
+// La talla del problema está definida por las dimensiones de la imagen (width x height)
+// y el tamaño del kernel (3x3 o 5x5) en SRM, que determina el número de operaciones 
+// de convolución por cada píxel.
 Image<float> get_srm_3x3() {
     Image<float> kernel(3, 3, 1);
     kernel.set(0, 0, 0, -1); kernel.set(0, 1, 0, 2); kernel.set(0, 2, 0, -1);
@@ -56,7 +59,10 @@ Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_s
     return result;
 }
 
-
+// --- ESTRUCTURAS DE CONTROL Y PARALELIZACIÓN CON OPENMP ---
+// El bucle de procesamiento de bloques es la estructura de control de mayor interés.
+// Se justifica la paralelización aquí porque el cálculo de la DCT en cada bloque 
+// es independiente de los demás, permitiendo paralelismo de datos (Data Parallelism).
 Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_size, bool invert) {
     auto begin = std::chrono::steady_clock::now();
     std::cout << "[DCT" << (invert ? " inversa" : " directa") << " " << block_size
@@ -66,7 +72,9 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
     std::vector<Block<float>> blocks = grayscale.get_blocks(block_size);
     int num_blocks = (int)blocks.size();
 
-
+// Directiva OpenMP: divide el trabajo entre hilos.
+// schedule(dynamic, 4): asigna bloques dinámicamente para balancear la carga.
+// shared/firstprivate: garantiza la integridad de los datos y evita condiciones de carrera.
     #pragma omp parallel for schedule(dynamic, 4) shared(blocks) default(none) firstprivate(block_size, invert, num_blocks)
     for (int i = 0; i < num_blocks; i++) {
         float **dctBlock = dct::create_matrix(block_size, block_size);
@@ -113,7 +121,7 @@ int main(int argc, char **argv) {
         std::cerr << "Uso: ./detect_parallel <imagen>" << std::endl;
         exit(1);
     }
-
+// Configuración del entorno paralelo (número de hilos)
     int num_threads = omp_get_max_threads();
     if (argc >= 3) {
         num_threads = std::atoi(argv[2]);
@@ -129,7 +137,11 @@ int main(int argc, char **argv) {
     std::cout << "Imagen cargada: " << image.width << "x" << image.height
               << " (" << image.channels << " canales)" << std::endl;
 
-
+// --- STD::ASYNC ---
+// Se utiliza std::async para implementar "Paralelismo de Tareas". 
+// En lugar de ejecutar SRM, ELA y DCT secuencialmente (uno tras otro),
+// se lanzan simultáneamente. Esto reduce el tiempo total de ejecución, 
+// aprovechando que cada análisis es totalmente independiente de los otros.
     std::cout << "\n--- Lanzando procesos en paralelo (std::async) ---" << std::endl;
 
     auto future_srm3 = std::async(std::launch::async, compute_srm, std::cref(image), 3);

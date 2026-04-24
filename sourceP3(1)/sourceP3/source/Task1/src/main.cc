@@ -10,7 +10,10 @@
 #include "utils/dct.h"
 #include <string>
 #include <chrono>
-
+// --- ASPECTOS QUE DEFINEN LA TALLA DEL PROBLEMA ---
+// En las funciones de generación de kernel (SRM), la talla está ligada 
+// a la complejidad del filtro (3x3 vs 5x5). Esto impacta directamente 
+// en el número de operaciones de punto flotante por cada píxel de la imagen.
 Image<float> get_srm_3x3() {
     Image<float> kernel(3, 3, 1);
     kernel.set(0, 0, 0, -1); kernel.set(0, 1, 0, 2); kernel.set(0, 2, 0, -1);
@@ -54,7 +57,10 @@ Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_s
     std::cout<<"SRM elapsed time: "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
     return result;
 }
-
+// --- ESTRUCTURAS DE CONTROL(SOLUCIÓN SECUENCIAL) ---
+// El bucle "for" que recorre los bloques es la estructura más relevante. 
+// En esta versión secuencial, cada bloque se procesa uno tras otro, lo que 
+// genera un cuello de botella si la imagen tiene muchos bloques.
 Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_size, bool invert) {
     auto begin = std::chrono::steady_clock::now();
     std::cout<<"Computing"; 
@@ -63,7 +69,8 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
     std::cout<<" DCT "<<block_size<<"x"<<block_size<<"..."<<std::endl;
     Image<float> grayscale = image.convert<float>().to_grayscale();
     std::vector<Block<float>> blocks = grayscale.get_blocks(block_size);
-
+// Este bucle es el candidato principal para la paralelización con OpenMP.
+// ejecuta iteraciones seriales sobre el vector de bloques.
     for(int i=0;i<blocks.size();i++){
         float **dctBlock = dct::create_matrix(block_size, block_size);
         dct::direct(dctBlock, blocks[i], 0);
@@ -85,6 +92,8 @@ Image<unsigned char> compute_ela(const Image<unsigned char> &image, int quality)
     std::cout<<"Computing ELA..."<<std::endl;
     auto begin = std::chrono::steady_clock::now();
     Image<unsigned char> grayscale = image.to_grayscale();
+    // El guardado y carga de archivos temporales define un coste de E/S (I/O) 
+    // que es independiente del cálculo computacional de los otros métodos.
     save_to_file("_temp.jpg", grayscale, quality);
     Image<float> compressed = load_from_file("_temp.jpg").convert<float>();
     compressed = compressed + (grayscale.convert<float>()*(-1));
@@ -102,6 +111,11 @@ int main(int argc, char **argv) {
     }
     int block_size=8;
     Image<unsigned char> image = load_from_file(argv[1]);
+// --- SOLUCIÓN PARALELA ---
+// En el main secuencial, cada llamada a "compute_xxx" debe terminar antes de 
+// que empiece la siguiente. La versión paralela cambiará esto usando 
+// std::async para que SRM, ELA y DCT se ejecuten concurrentemente, 
+// reduciendo drásticamente el tiempo global.
     Image<unsigned char> srm3x3 = compute_srm(image, 3);
     save_to_file("srm_kernel_3x3.png", srm3x3);
     save_to_file("srm_kernel_5x5.png", compute_srm(image, 5));
